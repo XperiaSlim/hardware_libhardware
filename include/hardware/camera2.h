@@ -18,7 +18,10 @@
 #define ANDROID_INCLUDE_CAMERA2_H
 
 #include "camera_common.h"
+#include <system/camera.h>
+#include <system/graphics.h>
 #include "system/camera_metadata.h"
+
 
 /**
  * Camera device HAL 2.0 [ CAMERA_DEVICE_API_VERSION_2_0 ]
