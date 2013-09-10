@@ -16,441 +16,457 @@
  */
 
 
-#ifndef ANDROID_AUDIO_HAL_INTERFACE_H
-#define ANDROID_AUDIO_HAL_INTERFACE_H
+#ifndef ANDROID_AUDIO_POLICY_INTERFACE_H
+#define ANDROID_AUDIO_POLICY_INTERFACE_H
 
 #include <stdint.h>
-#include <string.h>
-#include <strings.h>
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
-#include <cutils/bitops.h>
-
 #include <hardware/hardware.h>
+
 #include <system/audio.h>
-#include <hardware/audio_effect.h>
+#include <system/audio_policy.h>
 
 __BEGIN_DECLS
 
 /**
  * The id of this module
  */
-#define AUDIO_HARDWARE_MODULE_ID "audio"
+#define AUDIO_POLICY_HARDWARE_MODULE_ID "audio_policy"
 
 /**
  * Name of the audio devices to open
  */
-#define AUDIO_HARDWARE_INTERFACE "audio_hw_if"
+#define AUDIO_POLICY_INTERFACE "policy"
 
+/* ---------------------------------------------------------------------------- */
 
-/* Use version 0.1 to be compatible with first generation of audio hw module with version_major
- * hardcoded to 1. No audio module API change.
- */
-#define AUDIO_MODULE_API_VERSION_0_1 HARDWARE_MODULE_API_VERSION(0, 1)
-#define AUDIO_MODULE_API_VERSION_CURRENT AUDIO_MODULE_API_VERSION_0_1
-
-/* First generation of audio devices had version hardcoded to 0. all devices with versions < 1.0
- * will be considered of first generation API.
- */
-#define AUDIO_DEVICE_API_VERSION_0_0 HARDWARE_DEVICE_API_VERSION(0, 0)
-#define AUDIO_DEVICE_API_VERSION_1_0 HARDWARE_DEVICE_API_VERSION(1, 0)
-#define AUDIO_DEVICE_API_VERSION_2_0 HARDWARE_DEVICE_API_VERSION(2, 0)
-#ifndef ICS_AUDIO_BLOB
-#define AUDIO_DEVICE_API_VERSION_CURRENT AUDIO_DEVICE_API_VERSION_2_0
-#else
-#define AUDIO_DEVICE_API_VERSION_CURRENT AUDIO_DEVICE_API_VERSION_1_0
-#endif
-
-/**
- * List of known audio HAL modules. This is the base name of the audio HAL
- * library composed of the "audio." prefix, one of the base names below and
- * a suffix specific to the device.
- * e.g: audio.primary.goldfish.so or audio.a2dp.default.so
- */
-
-#define AUDIO_HARDWARE_MODULE_ID_PRIMARY "primary"
-#define AUDIO_HARDWARE_MODULE_ID_A2DP "a2dp"
-#define AUDIO_HARDWARE_MODULE_ID_USB "usb"
-#define AUDIO_HARDWARE_MODULE_ID_REMOTE_SUBMIX "r_submix"
-
-/**************************************/
-
-/**
- *  standard audio parameters that the HAL may need to handle
- */
-
-/**
- *  audio device parameters
+/*
+ * The audio_policy and audio_policy_service_ops structs define the
+ * communication interfaces between the platform specific audio policy manager
+ * and Android generic audio policy manager.
+ * The platform specific audio policy manager must implement methods of the
+ * audio_policy struct.
+ * This implementation makes use of the audio_policy_service_ops to control
+ * the activity and configuration of audio input and output streams.
+ *
+ * The platform specific audio policy manager is in charge of the audio
+ * routing and volume control policies for a given platform.
+ * The main roles of this module are:
+ *   - keep track of current system state (removable device connections, phone
+ *     state, user requests...).
+ *   System state changes and user actions are notified to audio policy
+ *   manager with methods of the audio_policy.
+ *
+ *   - process get_output() queries received when AudioTrack objects are
+ *     created: Those queries return a handler on an output that has been
+ *     selected, configured and opened by the audio policy manager and that
+ *     must be used by the AudioTrack when registering to the AudioFlinger
+ *     with the createTrack() method.
+ *   When the AudioTrack object is released, a release_output() query
+ *   is received and the audio policy manager can decide to close or
+ *   reconfigure the output depending on other streams using this output and
+ *   current system state.
+ *
+ *   - similarly process get_input() and release_input() queries received from
+ *     AudioRecord objects and configure audio inputs.
+ *   - process volume control requests: the stream volume is converted from
+ *     an index value (received from UI) to a float value applicable to each
+ *     output as a function of platform specific settings and current output
+ *     route (destination device). It also make sure that streams are not
+ *     muted if not allowed (e.g. camera shutter sound in some countries).
  */
 
-/* BT SCO Noise Reduction + Echo Cancellation parameters */
-#define AUDIO_PARAMETER_KEY_BT_NREC "bt_headset_nrec"
-#define AUDIO_PARAMETER_VALUE_ON "on"
-#define AUDIO_PARAMETER_VALUE_OFF "off"
+/* XXX: this should be defined OUTSIDE of frameworks/base */
+struct effect_descriptor_s;
 
-/* TTY mode selection */
-#define AUDIO_PARAMETER_KEY_TTY_MODE "tty_mode"
-#define AUDIO_PARAMETER_VALUE_TTY_OFF "tty_off"
-#define AUDIO_PARAMETER_VALUE_TTY_VCO "tty_vco"
-#define AUDIO_PARAMETER_VALUE_TTY_HCO "tty_hco"
-#define AUDIO_PARAMETER_VALUE_TTY_FULL "tty_full"
-
-/* A2DP sink address set by framework */
-#define AUDIO_PARAMETER_A2DP_SINK_ADDRESS "a2dp_sink_address"
-
-/* Screen state */
-#define AUDIO_PARAMETER_KEY_SCREEN_STATE "screen_state"
-
-/**
- *  audio stream parameters
- */
-
-#define AUDIO_PARAMETER_STREAM_ROUTING "routing"            // audio_devices_t
-#define AUDIO_PARAMETER_STREAM_FORMAT "format"              // audio_format_t
-#define AUDIO_PARAMETER_STREAM_CHANNELS "channels"          // audio_channel_mask_t
-#define AUDIO_PARAMETER_STREAM_FRAME_COUNT "frame_count"    // size_t
-#define AUDIO_PARAMETER_STREAM_INPUT_SOURCE "input_source"  // audio_source_t
-#define AUDIO_PARAMETER_STREAM_SAMPLING_RATE "sampling_rate" // uint32_t
-
-/* Query supported formats. The response is a '|' separated list of strings from
- * audio_format_t enum e.g: "sup_formats=AUDIO_FORMAT_PCM_16_BIT" */
-#define AUDIO_PARAMETER_STREAM_SUP_FORMATS "sup_formats"
-/* Query supported channel masks. The response is a '|' separated list of strings from
- * audio_channel_mask_t enum e.g: "sup_channels=AUDIO_CHANNEL_OUT_STEREO|AUDIO_CHANNEL_OUT_MONO" */
-#define AUDIO_PARAMETER_STREAM_SUP_CHANNELS "sup_channels"
-/* Query supported sampling rates. The response is a '|' separated list of integer values e.g:
- * "sup_sampling_rates=44100|48000" */
-#define AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES "sup_sampling_rates"
-
-/* Query handle fm parameter*/
-#define AUDIO_PARAMETER_KEY_HANDLE_FM "handle_fm"
-
-/* Query voip flag */
-#define AUDIO_PARAMETER_KEY_VOIP_CHECK "voip_flag"
-
-/* Query Fluence type */
-#define AUDIO_PARAMETER_KEY_FLUENCE_TYPE "fluence"
-
-/* Query if surround sound recording is supported */
-#define AUDIO_PARAMETER_KEY_SSR "ssr"
-
-/* Query if a2dp  is supported */
-#define AUDIO_PARAMETER_KEY_HANDLE_A2DP_DEVICE "isA2dpDeviceSupported"
-
-/* Query ADSP Status */
-#define AUDIO_PARAMETER_KEY_ADSP_STATUS "ADSP_STATUS"
-/**************************************/
-
-/* common audio stream configuration parameters */
-struct audio_config {
-    uint32_t sample_rate;
-    audio_channel_mask_t channel_mask;
-    audio_format_t  format;
-};
-
-typedef struct audio_config audio_config_t;
-#ifdef QCOM_HARDWARE
-typedef struct buf_info;
-#endif
-
-/* common audio stream parameters and operations */
-struct audio_stream {
-
-    /**
-     * Return the sampling rate in Hz - eg. 44100.
+struct audio_policy {
+    /*
+     * configuration functions
      */
-    uint32_t (*get_sample_rate)(const struct audio_stream *stream);
 
-    /* currently unused - use set_parameters with key
-     *    AUDIO_PARAMETER_STREAM_SAMPLING_RATE
-     */
-    int (*set_sample_rate)(struct audio_stream *stream, uint32_t rate);
+    /* indicate a change in device connection status */
+    int (*set_device_connection_state)(struct audio_policy *pol,
+                                       audio_devices_t device,
+                                       audio_policy_dev_state_t state,
+                                       const char *device_address);
 
-    /**
-     * Return size of input/output buffer in bytes for this stream - eg. 4800.
-     * It should be a multiple of the frame size.  See also get_input_buffer_size.
-     */
-    size_t (*get_buffer_size)(const struct audio_stream *stream);
+    /* retrieve a device connection status */
+    audio_policy_dev_state_t (*get_device_connection_state)(
+                                            const struct audio_policy *pol,
+                                            audio_devices_t device,
+                                            const char *device_address);
 
-    /**
-     * Return the channel mask -
-     *  e.g. AUDIO_CHANNEL_OUT_STEREO or AUDIO_CHANNEL_IN_STEREO
-     */
-    audio_channel_mask_t (*get_channels)(const struct audio_stream *stream);
+    /* indicate a change in phone state. Valid phones states are defined
+     * by audio_mode_t */
+    void (*set_phone_state)(struct audio_policy *pol, audio_mode_t state);
 
-    /**
-     * Return the audio format - e.g. AUDIO_FORMAT_PCM_16_BIT
-     */
-    audio_format_t (*get_format)(const struct audio_stream *stream);
+    /* deprecated, never called (was "indicate a change in ringer mode") */
+    void (*set_ringer_mode)(struct audio_policy *pol, uint32_t mode,
+                            uint32_t mask);
 
-    /* currently unused - use set_parameters with key
-     *     AUDIO_PARAMETER_STREAM_FORMAT
-     */
-    int (*set_format)(struct audio_stream *stream, audio_format_t format);
+    /* force using a specific device category for the specified usage */
+    void (*set_force_use)(struct audio_policy *pol,
+                          audio_policy_force_use_t usage,
+                          audio_policy_forced_cfg_t config);
 
-    /**
-     * Put the audio hardware input/output into standby mode.
-     * Driver should exit from standby mode at the next I/O operation.
-     * Returns 0 on success and <0 on failure.
-     */
-    int (*standby)(struct audio_stream *stream);
+    /* retrieve current device category forced for a given usage */
+    audio_policy_forced_cfg_t (*get_force_use)(const struct audio_policy *pol,
+                                               audio_policy_force_use_t usage);
 
-    /** dump the state of the audio input/output device */
-    int (*dump)(const struct audio_stream *stream, int fd);
+    /* if can_mute is true, then audio streams that are marked ENFORCED_AUDIBLE
+     * can still be muted. */
+    void (*set_can_mute_enforced_audible)(struct audio_policy *pol,
+                                          bool can_mute);
 
-    /** Return the set of device(s) which this stream is connected to */
-    audio_devices_t (*get_device)(const struct audio_stream *stream);
-
-    /**
-     * Currently unused - set_device() corresponds to set_parameters() with key
-     * AUDIO_PARAMETER_STREAM_ROUTING for both input and output.
-     * AUDIO_PARAMETER_STREAM_INPUT_SOURCE is an additional information used by
-     * input streams only.
-     */
-    int (*set_device)(struct audio_stream *stream, audio_devices_t device);
-
-    /**
-     * set/get audio stream parameters. The function accepts a list of
-     * parameter key value pairs in the form: key1=value1;key2=value2;...
-     *
-     * Some keys are reserved for standard parameters (See AudioParameter class)
-     *
-     * If the implementation does not accept a parameter change while
-     * the output is active but the parameter is acceptable otherwise, it must
-     * return -ENOSYS.
-     *
-     * The audio flinger will put the stream in standby and then change the
-     * parameter value.
-     */
-    int (*set_parameters)(struct audio_stream *stream, const char *kv_pairs);
+    /* check proper initialization */
+    int (*init_check)(const struct audio_policy *pol);
 
     /*
+     * Audio routing query functions
+     */
+
+#ifdef QCOM_ICS_LPA_COMPAT
+    /* request an session appropriate for playback of the supplied stream type and
+     * parameters */
+    audio_io_handle_t (*get_session)(struct audio_policy *pol,
+                                    audio_stream_type_t stream,
+                                    uint32_t format,
+                                    audio_output_flags_t flags,
+                                    int sessionId);
+
+    /* pause session created for LPA Playback */
+    void (*pause_session)(struct audio_policy *pol,
+                          audio_io_handle_t output,
+                          audio_stream_type_t stream);
+
+    /* resume session created for LPA Playback */
+    void (*resume_session)(struct audio_policy *pol,
+                          audio_io_handle_t output,
+                          audio_stream_type_t stream);
+
+    /* release session created for LPA Playback */
+    void (*release_session)(struct audio_policy *pol,
+                          audio_io_handle_t output);
+#endif
+
+    /* request an output appropriate for playback of the supplied stream type and
+     * parameters */
+    audio_io_handle_t (*get_output)(struct audio_policy *pol,
+                                    audio_stream_type_t stream,
+                                    uint32_t samplingRate,
+                                    audio_format_t format,
+                                    audio_channel_mask_t channelMask,
+                                    audio_output_flags_t flags);
+
+    /* indicates to the audio policy manager that the output starts being used
+     * by corresponding stream. */
+    int (*start_output)(struct audio_policy *pol,
+                        audio_io_handle_t output,
+                        audio_stream_type_t stream,
+                        int session);
+
+    /* indicates to the audio policy manager that the output stops being used
+     * by corresponding stream. */
+    int (*stop_output)(struct audio_policy *pol,
+                       audio_io_handle_t output,
+                       audio_stream_type_t stream,
+                       int session);
+
+    /* releases the output. */
+    void (*release_output)(struct audio_policy *pol, audio_io_handle_t output);
+
+    /* request an input appropriate for record from the supplied device with
+     * supplied parameters. */
+    audio_io_handle_t (*get_input)(struct audio_policy *pol, audio_source_t inputSource,
+                                   uint32_t samplingRate,
+                                   audio_format_t format,
+                                   audio_channel_mask_t channelMask,
+#ifdef STE_AUDIO
+                                   audio_in_acoustics_t acoustics,
+                                   audio_input_clients *inputClientId);
+#else
+                                   audio_in_acoustics_t acoustics);
+#endif
+
+    /* indicates to the audio policy manager that the input starts being used */
+    int (*start_input)(struct audio_policy *pol, audio_io_handle_t input);
+
+    /* indicates to the audio policy manager that the input stops being used. */
+    int (*stop_input)(struct audio_policy *pol, audio_io_handle_t input);
+
+    /* releases the input. */
+    void (*release_input)(struct audio_policy *pol, audio_io_handle_t input);
+
+    /*
+     * volume control functions
+     */
+
+    /* initialises stream volume conversion parameters by specifying volume
+     * index range. The index range for each stream is defined by AudioService. */
+    void (*init_stream_volume)(struct audio_policy *pol,
+                               audio_stream_type_t stream,
+                               int index_min,
+                               int index_max);
+
+    /* sets the new stream volume at a level corresponding to the supplied
+     * index. The index is within the range specified by init_stream_volume() */
+    int (*set_stream_volume_index)(struct audio_policy *pol,
+                                   audio_stream_type_t stream,
+                                   int index);
+
+    /* retrieve current volume index for the specified stream */
+    int (*get_stream_volume_index)(const struct audio_policy *pol,
+                                   audio_stream_type_t stream,
+                                   int *index);
+
+#ifndef ICS_AUDIO_BLOB
+    /* sets the new stream volume at a level corresponding to the supplied
+     * index for the specified device.
+     * The index is within the range specified by init_stream_volume() */
+    int (*set_stream_volume_index_for_device)(struct audio_policy *pol,
+                                   audio_stream_type_t stream,
+                                   int index,
+                                   audio_devices_t device);
+
+    /* retrieve current volume index for the specified stream for the specified device */
+    int (*get_stream_volume_index_for_device)(const struct audio_policy *pol,
+                                   audio_stream_type_t stream,
+                                   int *index,
+                                   audio_devices_t device);
+#endif
+
+    /* return the strategy corresponding to a given stream type */
+    uint32_t (*get_strategy_for_stream)(const struct audio_policy *pol,
+                                        audio_stream_type_t stream);
+
+    /* return the enabled output devices for the given stream type */
+    audio_devices_t (*get_devices_for_stream)(const struct audio_policy *pol,
+                                       audio_stream_type_t stream);
+
+    /* Audio effect management */
+    audio_io_handle_t (*get_output_for_effect)(struct audio_policy *pol,
+                                            const struct effect_descriptor_s *desc);
+
+    int (*register_effect)(struct audio_policy *pol,
+                           const struct effect_descriptor_s *desc,
+                           audio_io_handle_t output,
+                           uint32_t strategy,
+                           int session,
+                           int id);
+
+    int (*unregister_effect)(struct audio_policy *pol, int id);
+
+    int (*set_effect_enabled)(struct audio_policy *pol, int id, bool enabled);
+
+    bool (*is_stream_active)(const struct audio_policy *pol,
+                             audio_stream_type_t stream,
+                             uint32_t in_past_ms);
+
+    bool (*is_source_active)(const struct audio_policy *pol,
+                             audio_source_t source);
+
+    /* dump state */
+    int (*dump)(const struct audio_policy *pol, int fd);
+};
+
+/* audio hw module handle used by load_hw_module(), open_output_on_module()
+ * and open_input_on_module() */
+typedef int audio_module_handle_t;
+
+struct audio_policy_service_ops {
+    /*
+     * Audio output Control functions
+     */
+
+    /* Opens an audio output with the requested parameters.
+     *
+     * The parameter values can indicate to use the default values in case the
+     * audio policy manager has no specific requirements for the output being
+     * opened.
+     *
+     * When the function returns, the parameter values reflect the actual
+     * values used by the audio hardware output stream.
+     *
+     * The audio policy manager can check if the proposed parameters are
+     * suitable or not and act accordingly.
+     */
+    audio_io_handle_t (*open_output)(void *service,
+                                     audio_devices_t *pDevices,
+                                     uint32_t *pSamplingRate,
+                                     audio_format_t *pFormat,
+                                     audio_channel_mask_t *pChannelMask,
+                                     uint32_t *pLatencyMs,
+#ifdef STE_AUDIO
+                                     audio_output_flags_t flags,
+                                     audio_input_clients *pInputClientId);
+#else
+                                     audio_output_flags_t flags);
+#endif
+
+#ifdef QCOM_ICS_LPA_COMPAT
+    audio_io_handle_t (*open_session)(void *service,
+                                     uint32_t *pDevices,
+                                     uint32_t *pFormat,
+                                     audio_output_flags_t flags,
+                                     int32_t stream,
+                                     int32_t sessionId);
+
+    audio_io_handle_t (*close_session)(void *service,
+                                      audio_io_handle_t output);
+#endif
+
+    /* creates a special output that is duplicated to the two outputs passed as
+     * arguments. The duplication is performed by
+     * a special mixer thread in the AudioFlinger.
+     */
+    audio_io_handle_t (*open_duplicate_output)(void *service,
+                                               audio_io_handle_t output1,
+                                               audio_io_handle_t output2);
+
+    /* closes the output stream */
+    int (*close_output)(void *service, audio_io_handle_t output);
+
+    /* suspends the output.
+     *
+     * When an output is suspended, the corresponding audio hardware output
+     * stream is placed in standby and the AudioTracks attached to the mixer
+     * thread are still processed but the output mix is discarded.
+     */
+    int (*suspend_output)(void *service, audio_io_handle_t output);
+
+    /* restores a suspended output. */
+    int (*restore_output)(void *service, audio_io_handle_t output);
+
+    /* */
+    /* Audio input Control functions */
+    /* */
+
+    /* opens an audio input
+     * deprecated - new implementations should use open_input_on_module,
+     * and the acoustics parameter is ignored
+     */
+    audio_io_handle_t (*open_input)(void *service,
+                                    audio_devices_t *pDevices,
+                                    uint32_t *pSamplingRate,
+                                    audio_format_t *pFormat,
+                                    audio_channel_mask_t *pChannelMask,
+#ifdef STE_AUDIO
+                                    audio_in_acoustics_t acoustics,
+                                    audio_input_clients *pInputClientId);
+
+    /* closes an audio input */
+    int (*close_input)(void *service, audio_io_handle_t input,
+                        audio_input_clients *inputClientId);
+
+#else
+                                    audio_in_acoustics_t acoustics);
+
+    /* closes an audio input */
+    int (*close_input)(void *service, audio_io_handle_t input);
+#endif
+
+    /* */
+    /* misc control functions */
+    /* */
+
+    /* set a stream volume for a particular output.
+     *
+     * For the same user setting, a given stream type can have different
+     * volumes for each output (destination device) it is attached to.
+     */
+    int (*set_stream_volume)(void *service,
+                             audio_stream_type_t stream,
+                             float volume,
+                             audio_io_handle_t output,
+                             int delay_ms);
+
+    /* reroute a given stream type to the specified output */
+    int (*set_stream_output)(void *service,
+                             audio_stream_type_t stream,
+                             audio_io_handle_t output);
+
+    /* function enabling to send proprietary informations directly from audio
+     * policy manager to audio hardware interface. */
+    void (*set_parameters)(void *service,
+                           audio_io_handle_t io_handle,
+                           const char *kv_pairs,
+                           int delay_ms);
+
+    /* function enabling to receive proprietary informations directly from
+     * audio hardware interface to audio policy manager.
+     *
      * Returns a pointer to a heap allocated string. The caller is responsible
      * for freeing the memory for it using free().
      */
-    char * (*get_parameters)(const struct audio_stream *stream,
+
+    char * (*get_parameters)(void *service, audio_io_handle_t io_handle,
                              const char *keys);
-    int (*add_audio_effect)(const struct audio_stream *stream,
-                             effect_handle_t effect);
-    int (*remove_audio_effect)(const struct audio_stream *stream,
-                             effect_handle_t effect);
-};
-typedef struct audio_stream audio_stream_t;
 
-/**
- * audio_stream_out is the abstraction interface for the audio output hardware.
- *
- * It provides information about various properties of the audio output
- * hardware driver.
- */
-
-struct audio_stream_out {
-    struct audio_stream common;
-
-    /**
-     * Return the audio hardware driver estimated latency in milliseconds.
+    /* request the playback of a tone on the specified stream.
+     * used for instance to replace notification sounds when playing over a
+     * telephony device during a phone call.
      */
-    uint32_t (*get_latency)(const struct audio_stream_out *stream);
+    int (*start_tone)(void *service,
+                      audio_policy_tone_t tone,
+                      audio_stream_type_t stream);
 
-    /**
-     * Use this method in situations where audio mixing is done in the
-     * hardware. This method serves as a direct interface with hardware,
-     * allowing you to directly set the volume as apposed to via the framework.
-     * This method might produce multiple PCM outputs or hardware accelerated
-     * codecs, such as MP3 or AAC.
-     */
-    int (*set_volume)(struct audio_stream_out *stream, float left, float right);
+    int (*stop_tone)(void *service);
 
-    /**
-     * Write audio buffer to driver. Returns number of bytes written, or a
-     * negative status_t. If at least one frame was written successfully prior to the error,
-     * it is suggested that the driver return that successful (short) byte count
-     * and then return an error in the subsequent call.
-     */
-    ssize_t (*write)(struct audio_stream_out *stream, const void* buffer,
-                     size_t bytes);
+    /* set down link audio volume. */
+    int (*set_voice_volume)(void *service,
+                            float volume,
+                            int delay_ms);
 
-    /* return the number of audio frames written by the audio dsp to DAC since
-     * the output has exited standby
-     */
-    int (*get_render_position)(const struct audio_stream_out *stream,
-                               uint32_t *dsp_frames);
+    /* move effect to the specified output */
+    int (*move_effects)(void *service,
+                        int session,
+                        audio_io_handle_t src_output,
+                        audio_io_handle_t dst_output);
 
-#ifdef QCOM_HARDWARE
-    /**
-     * start audio data rendering
-     */
-    int (*start)(struct audio_stream_out *stream);
-
-    /**
-     * pause audio rendering
-     */
-    int (*pause)(struct audio_stream_out *stream);
-
-    /**
-     * flush audio data with driver
-     */
-    int (*flush)(struct audio_stream_out *stream);
-
-    /**
-     * stop audio data rendering
-     */
-    int (*stop)(struct audio_stream_out *stream);
+#ifdef QCOM_FM_ENABLED
+    /* set fm audio volume. */
+    int (*set_fm_volume)(void *service,
+                         float volume,
+                         int delay_ms);
 #endif
 
-    /**
-     * get the local time at which the next write to the audio driver will be presented.
-     * The units are microseconds, where the epoch is decided by the local audio HAL.
-     */
-    int (*get_next_write_timestamp)(const struct audio_stream_out *stream,
-                                    int64_t *timestamp);
-#ifdef QCOM_HARDWARE
-    /**
-    * return the current timestamp after quering to the driver
-     */
-    int (*get_time_stamp)(const struct audio_stream_out *stream,
-                               uint64_t *time_stamp);
-    /**
-    * EOS notification from HAL to Player
-     */
-    int (*set_observer)(const struct audio_stream_out *stream,
-                               void *observer);
-    /**
-     * Get the physical address of the buffer allocated in the
-     * driver
-     */
-    int (*get_buffer_info) (const struct audio_stream_out *stream,
-                                struct buf_info **buf);
-    /**
-     * Check if next buffer is available. Waits until next buffer is
-     * available
-     */
-    int (*is_buffer_available) (const struct audio_stream_out *stream,
-                                     int *isAvail);
-#endif
-
-};
-typedef struct audio_stream_out audio_stream_out_t;
-
-#ifdef QCOM_HARDWARE
-/**
- * audio_broadcast_stream is the abstraction interface for the
- * audio output hardware.
- *
- * It provides information about various properties of the audio output
- * hardware driver.
- */
-
-struct audio_broadcast_stream {
-    struct audio_stream common;
-
-    /**
-     * return the audio hardware driver latency in milli seconds.
-     */
-    uint32_t (*get_latency)(const struct audio_broadcast_stream *stream);
-
-    /**
-     * Use this method in situations where audio mixing is done in the
-     * hardware. This method serves as a direct interface with hardware,
-     * allowing you to directly set the volume as apposed to via the framework.
-     * This method might produce multiple PCM outputs or hardware accelerated
-     * codecs, such as MP3 or AAC.
-     */
-    int (*set_volume)(struct audio_broadcast_stream *stream, float left, float right);
-
-    int (*mute)(struct audio_broadcast_stream *stream, bool mute);
-
-    int (*start)(struct audio_broadcast_stream *stream, int64_t absTimeToStart);
-    /**
-     * write audio buffer to driver. Returns number of bytes written
-     */
-    ssize_t (*write)(struct audio_broadcast_stream *stream, const void* buffer,
-                     size_t bytes, int64_t timestamp, int audioType);
-
-};
-typedef struct audio_broadcast_stream audio_broadcast_stream_t;
-#endif
-
-struct audio_stream_in {
-    struct audio_stream common;
-
-    /** set the input gain for the audio driver. This method is for
-     *  for future use */
-    int (*set_gain)(struct audio_stream_in *stream, float gain);
-
-    /** Read audio buffer in from audio driver. Returns number of bytes read, or a
-     *  negative status_t. If at least one frame was read prior to the error,
-     *  read should return that byte count and then return an error in the subsequent call.
-     */
-    ssize_t (*read)(struct audio_stream_in *stream, void* buffer,
-                    size_t bytes);
-
-    /**
-     * Return the amount of input frames lost in the audio driver since the
-     * last call of this function.
-     * Audio driver is expected to reset the value to 0 and restart counting
-     * upon returning the current value by this function call.
-     * Such loss typically occurs when the user space process is blocked
-     * longer than the capacity of audio driver buffers.
+    /* loads an audio hw module.
      *
-     * Unit: the number of input audio frames
+     * The module name passed is the base name of the HW module library, e.g "primary" or "a2dp".
+     * The function returns a handle on the module that will be used to specify a particular
+     * module when calling open_output_on_module() or open_input_on_module()
      */
-    uint32_t (*get_input_frames_lost)(struct audio_stream_in *stream);
+    audio_module_handle_t (*load_hw_module)(void *service,
+                                              const char *name);
+
+    /* Opens an audio output on a particular HW module.
+     *
+     * Same as open_output() but specifying a specific HW module on which the output must be opened.
+     */
+    audio_io_handle_t (*open_output_on_module)(void *service,
+                                     audio_module_handle_t module,
+                                     audio_devices_t *pDevices,
+                                     uint32_t *pSamplingRate,
+                                     audio_format_t *pFormat,
+                                     audio_channel_mask_t *pChannelMask,
+                                     uint32_t *pLatencyMs,
+                                     audio_output_flags_t flags);
+
+    /* Opens an audio input on a particular HW module.
+     *
+     * Same as open_input() but specifying a specific HW module on which the input must be opened.
+     * Also removed deprecated acoustics parameter
+     */
+    audio_io_handle_t (*open_input_on_module)(void *service,
+                                    audio_module_handle_t module,
+                                    audio_devices_t *pDevices,
+                                    uint32_t *pSamplingRate,
+                                    audio_format_t *pFormat,
+                                    audio_channel_mask_t *pChannelMask);
+
 };
-typedef struct audio_stream_in audio_stream_in_t;
-
-/**
- * return the frame size (number of bytes per sample).
- */
-static inline size_t audio_stream_frame_size(const struct audio_stream *s)
-{
-    size_t chan_samp_sz;
-    uint32_t chan_mask = s->get_channels(s);
-    int format = s->get_format(s);
-
-#ifdef QCOM_HARDWARE
-    if (!s)
-        return 0;
-
-    if (audio_is_input_channel(chan_mask)) {
-        chan_mask &= (AUDIO_CHANNEL_IN_STEREO | \
-                      AUDIO_CHANNEL_IN_MONO | \
-                      AUDIO_CHANNEL_IN_5POINT1);
-    }
-
-    if(!strncmp(s->get_parameters(s, "voip_flag"),"voip_flag=1",sizeof("voip_flag=1"))) {
-        if(format != AUDIO_FORMAT_PCM_8_BIT)
-            return popcount(chan_mask) * sizeof(int16_t);
-        else
-            return popcount(chan_mask) * sizeof(int8_t);
-    }
-#endif
-
-    switch (format) {
-#ifdef QCOM_HARDWARE
-    case AUDIO_FORMAT_AMR_NB:
-        chan_samp_sz = 32;
-        break;
-    case AUDIO_FORMAT_EVRC:
-        chan_samp_sz = 23;
-        break;
-    case AUDIO_FORMAT_QCELP:
-        chan_samp_sz = 35;
-        break;
-#endif
-    case AUDIO_FORMAT_PCM_16_BIT:
-        chan_samp_sz = sizeof(int16_t);
-        break;
-    case AUDIO_FORMAT_PCM_8_BIT:
-    default:
-        chan_samp_sz = sizeof(int8_t);
-        break;
-    }
-
-    return popcount(chan_mask) * chan_samp_sz;
-}
-
 
 /**********************************************************************/
 
@@ -459,204 +475,37 @@ static inline size_t audio_stream_frame_size(const struct audio_stream *s)
  * and the fields of this data structure must begin with hw_module_t
  * followed by module specific information.
  */
-struct audio_module {
+typedef struct audio_policy_module {
     struct hw_module_t common;
-};
+} audio_policy_module_t;
 
-struct audio_hw_device {
+struct audio_policy_device {
     struct hw_device_t common;
 
-    /**
-     * used by audio flinger to enumerate what devices are supported by
-     * each audio_hw_device implementation.
-     *
-     * Return value is a bitmask of 1 or more values of audio_devices_t
-     *
-     * NOTE: audio HAL implementations starting with
-     * AUDIO_DEVICE_API_VERSION_2_0 do not implement this function.
-     * All supported devices should be listed in audio_policy.conf
-     * file and the audio policy manager must choose the appropriate
-     * audio module based on information in this file.
-     */
-    uint32_t (*get_supported_devices)(const struct audio_hw_device *dev);
+    int (*create_audio_policy)(const struct audio_policy_device *device,
+                               struct audio_policy_service_ops *aps_ops,
+                               void *service,
+                               struct audio_policy **ap);
 
-    /**
-     * check to see if the audio hardware interface has been initialized.
-     * returns 0 on success, -ENODEV on failure.
-     */
-    int (*init_check)(const struct audio_hw_device *dev);
-
-    /** set the audio volume of a voice call. Range is between 0.0 and 1.0 */
-    int (*set_voice_volume)(struct audio_hw_device *dev, float volume);
-
-    /**
-     * set the audio volume for all audio activities other than voice call.
-     * Range between 0.0 and 1.0. If any value other than 0 is returned,
-     * the software mixer will emulate this capability.
-     */
-    int (*set_master_volume)(struct audio_hw_device *dev, float volume);
-
-#ifndef ICS_AUDIO_BLOB
-    /**
-     * Get the current master volume value for the HAL, if the HAL supports
-     * master volume control.  AudioFlinger will query this value from the
-     * primary audio HAL when the service starts and use the value for setting
-     * the initial master volume across all HALs.  HALs which do not support
-     * this method may leave it set to NULL.
-     */
-    int (*get_master_volume)(struct audio_hw_device *dev, float *volume);
-#endif
-
-#ifdef QCOM_FM_ENABLED
-    /** set the fm audio volume. Range is between 0.0 and 1.0 */
-    int (*set_fm_volume)(struct audio_hw_device *dev, float volume);
-#endif
-
-    /**
-     * set_mode is called when the audio mode changes. AUDIO_MODE_NORMAL mode
-     * is for standard audio playback, AUDIO_MODE_RINGTONE when a ringtone is
-     * playing, and AUDIO_MODE_IN_CALL when a call is in progress.
-     */
-    int (*set_mode)(struct audio_hw_device *dev, audio_mode_t mode);
-
-    /* mic mute */
-    int (*set_mic_mute)(struct audio_hw_device *dev, bool state);
-    int (*get_mic_mute)(const struct audio_hw_device *dev, bool *state);
-
-    /* set/get global audio parameters */
-    int (*set_parameters)(struct audio_hw_device *dev, const char *kv_pairs);
-
-    /*
-     * Returns a pointer to a heap allocated string. The caller is responsible
-     * for freeing the memory for it using free().
-     */
-    char * (*get_parameters)(const struct audio_hw_device *dev,
-                             const char *keys);
-
-    /* Returns audio input buffer size according to parameters passed or
-     * 0 if one of the parameters is not supported.
-     * See also get_buffer_size which is for a particular stream.
-     */
-    size_t (*get_input_buffer_size)(const struct audio_hw_device *dev,
-#ifndef ICS_AUDIO_BLOB
-                                    const struct audio_config *config);
-#else
-                                    uint32_t sample_rate, int format,
-                                    int channel_count);
-#endif
-
-    /** This method creates and opens the audio hardware output stream */
-#ifndef ICS_AUDIO_BLOB
-    int (*open_output_stream)(struct audio_hw_device *dev,
-                              audio_io_handle_t handle,
-                              audio_devices_t devices,
-                              audio_output_flags_t flags,
-                              struct audio_config *config,
-                              struct audio_stream_out **stream_out);
-#else
-    int (*open_output_stream)(struct audio_hw_device *dev, uint32_t devices,
-                              int *format, uint32_t *channels,
-                              uint32_t *sample_rate,
-                              struct audio_stream_out **out);
-#endif
-
-#ifdef QCOM_ICS_LPA_COMPAT
-    /** This method creates and opens the audio hardware output session */
-    int (*open_output_session)(struct audio_hw_device *dev, uint32_t devices,
-                              int *format, int sessionId,
-                              struct audio_stream_out **out);
-#endif
-
-    void (*close_output_stream)(struct audio_hw_device *dev,
-                                struct audio_stream_out* stream_out);
-
-#if defined (QCOM_HARDWARE) || defined (STE_HARDWARE)
-    /** This method creates and opens the audio hardware output
-     *  for broadcast stream */
-    int (*open_broadcast_stream)(struct audio_hw_device *dev, uint32_t devices,
-                                 int format, uint32_t channels,
-                                 uint32_t sample_rate,
-                                 uint32_t audio_source,
-                                 struct audio_broadcast_stream **out);
-
-    void (*close_broadcast_stream)(struct audio_hw_device *dev,
-                                   struct audio_broadcast_stream *out);
-#endif
-
-    /** This method creates and opens the audio hardware input stream */
-#ifndef ICS_AUDIO_BLOB
-    int (*open_input_stream)(struct audio_hw_device *dev,
-                             audio_io_handle_t handle,
-                             audio_devices_t devices,
-                             struct audio_config *config,
-                             struct audio_stream_in **stream_in);
-#else
-    int (*open_input_stream)(struct audio_hw_device *dev, uint32_t devices,
-                             int *format, uint32_t *channels,
-                             uint32_t *sample_rate,
-                             audio_in_acoustics_t acoustics,
-                             struct audio_stream_in **stream_in);
-#endif
-
-    void (*close_input_stream)(struct audio_hw_device *dev,
-                               struct audio_stream_in *stream_in);
-
-    /** This method dumps the state of the audio hardware */
-    int (*dump)(const struct audio_hw_device *dev, int fd);
-
-#ifndef ICS_AUDIO_BLOB
-    /**
-     * set the audio mute status for all audio activities.  If any value other
-     * than 0 is returned, the software mixer will emulate this capability.
-     */
-    int (*set_master_mute)(struct audio_hw_device *dev, bool mute);
-
-    /**
-     * Get the current master mute status for the HAL, if the HAL supports
-     * master mute control.  AudioFlinger will query this value from the primary
-     * audio HAL when the service starts and use the value for setting the
-     * initial master mute across all HALs.  HALs which do not support this
-     * method may leave it set to NULL.
-     */
-    int (*get_master_mute)(struct audio_hw_device *dev, bool *mute);
-#endif
+    int (*destroy_audio_policy)(const struct audio_policy_device *device,
+                                struct audio_policy *ap);
 };
-typedef struct audio_hw_device audio_hw_device_t;
 
 /** convenience API for opening and closing a supported device */
 
-static inline int audio_hw_device_open(const struct hw_module_t* module,
-                                       struct audio_hw_device** device)
+static inline int audio_policy_dev_open(const hw_module_t* module,
+                                    struct audio_policy_device** device)
 {
-    return module->methods->open(module, AUDIO_HARDWARE_INTERFACE,
-                                 (struct hw_device_t**)device);
+    return module->methods->open(module, AUDIO_POLICY_INTERFACE,
+                                 (hw_device_t**)device);
 }
 
-static inline int audio_hw_device_close(struct audio_hw_device* device)
+static inline int audio_policy_dev_close(struct audio_policy_device* device)
 {
     return device->common.close(&device->common);
 }
 
-#ifdef QCOM_HARDWARE
-/** Structure to save buffer information for applying effects for
- *  LPA buffers */
-struct buf_info {
-    int bufsize;
-    int nBufs;
-    int **buffers;
-};
 
-#ifdef __cplusplus
-/**
- *Observer class to post the Events from HAL to Flinger
-*/
-class AudioEventObserver {
-public:
-    virtual ~AudioEventObserver() {}
-    virtual void postEOS(int64_t delayUs) = 0;
-};
-#endif
-#endif
 __END_DECLS
 
-#endif  // ANDROID_AUDIO_INTERFACE_H
+#endif  // ANDROID_AUDIO_POLICY_INTERFACE_H
