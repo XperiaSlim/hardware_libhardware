@@ -1,4 +1,7 @@
 /*
+ * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution
+ *
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,12 +40,16 @@ __BEGIN_DECLS
 /* Bluetooth profile interface IDs */
 
 #define BT_PROFILE_HANDSFREE_ID "handsfree"
+#define BT_PROFILE_HANDSFREE_CLIENT_ID "handsfree_client"
 #define BT_PROFILE_ADVANCED_AUDIO_ID "a2dp"
 #define BT_PROFILE_HEALTH_ID "health"
 #define BT_PROFILE_SOCKETS_ID "socket"
 #define BT_PROFILE_HIDHOST_ID "hidhost"
 #define BT_PROFILE_PAN_ID "pan"
+#define BT_PROFILE_MAP_CLIENT_ID "map_client"
 
+#define BT_PROFILE_GATT_ID "gatt"
+#define BT_PROFILE_AV_RC_ID "avrcp"
 
 /** Bluetooth Address */
 typedef struct {
@@ -51,7 +58,7 @@ typedef struct {
 
 /** Bluetooth Device Name */
 typedef struct {
-    uint8_t name[248];
+    uint8_t name[249];
 } __attribute__((packed))bt_bdname_t;
 
 /** Bluetooth Adapter Visibility Modes*/
@@ -81,7 +88,8 @@ typedef enum {
     BT_STATUS_PARM_INVALID,
     BT_STATUS_UNHANDLED,
     BT_STATUS_AUTH_FAILURE,
-    BT_STATUS_RMT_DEV_DOWN
+    BT_STATUS_RMT_DEV_DOWN,
+    BT_STATUS_AUTH_REJECTED
 
 } bt_status_t;
 
@@ -114,6 +122,15 @@ typedef struct
    uint16_t channel;
    char name[256]; // what's the maximum length
 } bt_service_record_t;
+
+
+/** Bluetooth Remote Version info */
+typedef struct
+{
+   int version;
+   int sub_ver;
+   int manufacturer;
+} bt_remote_version_t;
 
 /* Bluetooth Adapter and Remote Device property types */
 typedef enum {
@@ -189,6 +206,20 @@ typedef enum {
      * Data type   - int32_t.
      */
     BT_PROPERTY_REMOTE_RSSI,
+
+   /**
+    * Description - Trust value of the remote device
+    * Access mode - GET and SET
+    * Data type   - boolean.
+    */
+    BT_PROPERTY_REMOTE_TRUST_VALUE,
+   /**
+     * Description - Remote version info
+     * Access mode - SET/GET.
+     * Data type   - bt_remote_version_t.
+     */
+
+    BT_PROPERTY_REMOTE_VERSION_INFO,
 
     BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP = 0xFF,
 } bt_property_type_t;
@@ -299,6 +330,10 @@ typedef void (*callback_thread_event)(bt_cb_thread_evt evt);
 /* Receive any HCI event from controller. Must be in DUT Mode for this callback to be received */
 typedef void (*dut_mode_recv_callback)(uint16_t opcode, uint8_t *buf, uint8_t len);
 
+/* LE Test mode callbacks
+* This callback shall be invoked whenever the le_tx_test, le_rx_test or le_test_end is invoked
+* The num_packets is valid only for le_test_end command */
+typedef void (*le_test_mode_callback)(bt_status_t status, uint16_t num_packets);
 /** TODO: Add callbacks for Link Up/Down and other generic
   *  notifications/callbacks */
 
@@ -317,6 +352,7 @@ typedef struct {
     acl_state_changed_callback acl_state_changed_cb;
     callback_thread_event thread_evt_cb;
     dut_mode_recv_callback dut_mode_recv_cb;
+    le_test_mode_callback le_test_mode_cb;
 } bt_callbacks_t;
 
 /** NOTE: By default, no profiles are initialized at the time of init/enable.
@@ -424,6 +460,12 @@ typedef struct {
 
     /* Send any test HCI (vendor-specific) command to the controller. Must be in DUT Mode */
     int (*dut_mode_send)(uint16_t opcode, uint8_t *buf, uint8_t len);
+    /** BLE Test Mode APIs */
+    /* opcode MUST be one of: LE_Receiver_Test, LE_Transmitter_Test, LE_Test_End */
+    int (*le_test_mode)(uint16_t opcode, uint8_t *buf, uint8_t len);
+
+    /* enable or disable bluetooth HCI snoop log */
+    int (*config_hci_snoop_log)(uint8_t enable);
 } bt_interface_t;
 
 /** TODO: Need to add APIs for Service Discovery, Service authorization and
